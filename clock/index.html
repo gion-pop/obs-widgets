@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clock Widget</title>
+  <!--
+    OBS Browser Source 推奨設定:
+      - 幅: 360 / 高さ: 160（実寸 ≒ 342×146。320 だと横にはみ出す）
+      - ウィジェットはソース枠内で自動中央配置
+      - 「ローカルファイル」でこの HTML を指定
+      - 背景: 透明（デフォルト）
+  -->
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-date), sans-serif;
+    }
+
+    .widget {
+      position: relative;
+      display: inline-flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 18px 14px;
+      border-radius: 18px;
+      background: var(--bg-color);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      isolation: isolate;
+      overflow: hidden;
+      box-shadow:
+        0 0 20px rgba(0, 229, 255, 0.15),
+        0 0 40px rgba(255, 0, 170, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    /* 背景波（リボン × 3） */
+    .wave-bg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.72;
+    }
+
+    /* ネオングラデーション枠 */
+    .widget::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 18px;
+      padding: 1.5px;
+      background: linear-gradient(
+        135deg,
+        var(--accent-cyan) 0%,
+        rgba(120, 80, 255, 0.6) 50%,
+        var(--accent-magenta) 100%
+      );
+      -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+      mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    /* コーナーの装飾ブロブ */
+    .widget::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 18px;
+      background:
+        radial-gradient(ellipse 80px 60px at 95% 8%, rgba(180, 40, 200, 0.35), transparent),
+        radial-gradient(ellipse 70px 50px at 5% 92%, rgba(0, 180, 220, 0.25), transparent);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .content {
+      position: relative;
+      z-index: 2;
+      width: fit-content;
+    }
+
+    .clock-block {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      width: fit-content;
+    }
+
+    .time-main,
+    .time-sec {
+      font-family: var(--font-time), sans-serif;
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: 'tnum' 1;
+    }
+
+    .time-main {
+      display: inline-flex;
+      align-self: center;
+      font-size: var(--time-size);
+      font-weight: 500;
+      line-height: 1;
+      color: var(--text-primary);
+    }
+
+    .time-main .d {
+      display: inline-block;
+      width: 0.85em;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .time-main .sep {
+      display: inline-block;
+      width: 0.42em;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      width: 100%;
+      padding-top: 2px;
+    }
+
+    .date {
+      font-family: var(--font-date), sans-serif;
+      font-size: var(--date-size);
+      font-weight: 500;
+      letter-spacing: 1.6px;
+      color: var(--text-primary);
+      white-space: nowrap;
+      opacity: 0.92;
+    }
+
+    .time-sec {
+      display: inline-flex;
+      flex-shrink: 0;
+      font-size: var(--sec-size);
+      font-weight: 400;
+      color: var(--text-secondary);
+      opacity: 0.9;
+    }
+
+    .time-sec .d {
+      display: inline-block;
+      width: 0.85em;
+      text-align: center;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="widget">
+    <canvas class="wave-bg" id="wave"></canvas>
+    <div class="content">
+      <div class="clock-block">
+        <span class="time-main" aria-hidden="true">
+          <span class="d" id="h1">0</span><span class="d" id="h2">0</span><span class="sep">:</span><span class="d" id="m1">0</span><span class="d" id="m2">0</span>
+        </span>
+        <div class="meta-row">
+          <span class="date" id="date">--- -- | ---</span>
+          <span class="time-sec" aria-hidden="true">
+            <span class="d" id="s1">0</span><span class="d" id="s2">0</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================
+    // CONFIG — ここを編集してカスタマイズ
+    // ============================================================
+    const CONFIG = {
+      fontFamilyTime: 'Orbitron',
+      fontFamilyDate: 'Orbitron',
+
+      colors: {
+        accentCyan:   '#00e5ff',
+        accentMagenta:'#ff00aa',
+        bgColor:      'rgba(12, 12, 22, 0.78)',
+        textPrimary:  '#ffffff',
+        textSecondary:'#c8d0e0',
+      },
+
+      sizes: {
+        time: '80px',
+        sec:  '28px',
+        date: '24px',
+      },
+
+      // 背景波（1.0 = デフォルト）
+      waveSpeed:        0.3,
+      waveSpeedJitter:  1.15,  // 各リボンの speedJitter 倍率
+      waveAmpJitter:    0.14,
+      waveFreqJitter:   0.10,
+      waveAmplitude:    1.1,
+      waveOpacity:      0.72,
+      waveDrift:        0.07,  // 流速などがゆっくり入れ替わる（0 = 起動時のみランダム）
+    };
+    // ============================================================
+
+    const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    const DAYS   = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
+
+    function applyConfig() {
+      const root = document.documentElement;
+      const c = CONFIG.colors;
+      root.style.setProperty('--font-time', CONFIG.fontFamilyTime);
+      root.style.setProperty('--font-date', CONFIG.fontFamilyDate);
+      root.style.setProperty('--accent-cyan', c.accentCyan);
+      root.style.setProperty('--accent-magenta', c.accentMagenta);
+      root.style.setProperty('--bg-color', c.bgColor);
+      root.style.setProperty('--text-primary', c.textPrimary);
+      root.style.setProperty('--text-secondary', c.textSecondary);
+      root.style.setProperty('--time-size', CONFIG.sizes.time);
+      root.style.setProperty('--sec-size', CONFIG.sizes.sec);
+      root.style.setProperty('--date-size', CONFIG.sizes.date);
+
+      document.querySelector('.wave-bg').style.opacity = CONFIG.waveOpacity;
+
+      const families = [...new Set([CONFIG.fontFamilyTime, CONFIG.fontFamilyDate])];
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = `https://fonts.googleapis.com/css2?${families.map(f => `family=${f.replace(/ /g, '+')}:wght@400;500;700`).join('&')}&display=swap`;
+      document.head.appendChild(link);
+    }
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+
+    function updateClock() {
+      const now = new Date();
+      const month = MONTHS[now.getMonth()];
+      const day   = now.getDate();
+      const dow   = DAYS[now.getDay()];
+      const h = pad(now.getHours());
+      const m = pad(now.getMinutes());
+      const s = pad(now.getSeconds());
+
+      document.getElementById('date').textContent = `${month} ${day} | ${dow}`;
+      document.getElementById('h1').textContent = h[0];
+      document.getElementById('h2').textContent = h[1];
+      document.getElementById('m1').textContent = m[0];
+      document.getElementById('m2').textContent = m[1];
+      document.getElementById('s1').textContent = s[0];
+      document.getElementById('s2').textContent = s[1];
+    }
+
+    // --- 背景に 3 本のリボンが滑らかに流れる ---
+    class BackgroundWave {
+      static RANGES = {
+        freq:            [1.0, 3.0],
+        baseSpeed:       [0.15, 0.85],
+        speedJitter:     [0.18, 0.42],
+        speedJitterFreq: [0.03, 0.55],
+        jitterTimeRate:  [0.4, 1.8],
+        jitterFreq:      [0.04, 0.22],
+        breatheFreq:     [0.07, 0.26],
+      };
+
+      constructor(canvas, config) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.config = config;
+        this.t = 0;
+        this.dpr = window.devicePixelRatio || 1;
+
+        // 位置・見た目だけ固定。流速などはランダム＋時間で drift
+        this.ribbons = [
+          { yRatio: 0.38, amp: 0.18, lineWidth: 2.4, alpha: 0.85 },
+          { yRatio: 0.58, amp: 0.14, lineWidth: 2.0, alpha: 0.65 },
+          { yRatio: 0.76, amp: 0.16, lineWidth: 1.6, alpha: 0.50 },
+        ].map((shell) => this._createRibbon(shell));
+
+        this.lastTime = performance.now();
+
+        this._resize();
+        const ro = new ResizeObserver(() => this._resize());
+        ro.observe(canvas.parentElement);
+      }
+
+      _rand(key) {
+        const [a, b] = BackgroundWave.RANGES[key];
+        return a + Math.random() * (b - a);
+      }
+
+      _randTau() {
+        return Math.random() * Math.PI * 2;
+      }
+
+      _pickDriftTargets() {
+        return {
+          targetBaseSpeed:       this._rand('baseSpeed'),
+          targetFreq:              this._rand('freq'),
+          targetSpeedJitter:       this._rand('speedJitter'),
+          targetSpeedJitterFreq:   this._rand('speedJitterFreq'),
+          targetJitterTimeRate:    this._rand('jitterTimeRate'),
+        };
+      }
+
+      _createRibbon(shell) {
+        return {
+          ...shell,
+          freq:              this._rand('freq'),
+          baseSpeed:         this._rand('baseSpeed'),
+          phase:             this._randTau(),
+          jitterFreq:        this._rand('jitterFreq'),
+          jitterPhase:       this._randTau(),
+          speedJitter:       this._rand('speedJitter'),
+          speedJitterFreq:   this._rand('speedJitterFreq'),
+          speedJitterPhase:  this._randTau(),
+          jitterTimeRate:    this._rand('jitterTimeRate'),
+          breatheFreq:       this._rand('breatheFreq'),
+          breathePhase:      this._randTau(),
+          localPhase:        this._randTau(),
+          jitterTime:        Math.random() * 12,
+          smoothFreq: 1, smoothAmp: 1, smoothSpeed: 1,
+          ...this._pickDriftTargets(),
+        };
+      }
+
+      _driftRibbon(ribbon, dt) {
+        const k = this.config.waveDrift * dt;
+        if (k <= 0) return;
+
+        const morph = (prop, targetProp, rangeKey) => {
+          ribbon[prop] += (ribbon[targetProp] - ribbon[prop]) * k;
+          if (Math.abs(ribbon[targetProp] - ribbon[prop]) < 0.012) {
+            ribbon[targetProp] = this._rand(rangeKey);
+          }
+        };
+
+        morph('baseSpeed',       'targetBaseSpeed',       'baseSpeed');
+        morph('freq',            'targetFreq',            'freq');
+        morph('speedJitter',     'targetSpeedJitter',     'speedJitter');
+        morph('speedJitterFreq', 'targetSpeedJitterFreq', 'speedJitterFreq');
+        morph('jitterTimeRate',  'targetJitterTimeRate',  'jitterTimeRate');
+      }
+
+      _resize() {
+        const rect = this.canvas.parentElement.getBoundingClientRect();
+        this.w = rect.width;
+        this.h = rect.height;
+        this.canvas.width  = this.w * this.dpr;
+        this.canvas.height = this.h * this.dpr;
+        this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      }
+
+      // 滑らかなジッタ（sin 重ね。phaseOffset で速度/振幅/周波数のパターンをずらす）
+      _ribbonJitter(ribbon, amount, phaseOffset) {
+        if (amount <= 0) return 1;
+        const jf = ribbon.jitterFreq;
+        const p = ribbon.jitterPhase + phaseOffset;
+        return 1
+          + Math.sin(this.t * jf + p) * amount
+          + Math.sin(this.t * jf * 2.13 + p * 1.57) * amount * 0.45
+          + Math.sin(this.t * jf * 0.47 + p * 2.91) * amount * 0.28;
+      }
+
+      _smoothJitter(ribbon, amount, phaseOffset, key, dt) {
+        const target = this._ribbonJitter(ribbon, amount, phaseOffset);
+        const k = Math.min(1, dt * 1.2);
+        ribbon[key] += (target - ribbon[key]) * k;
+        return ribbon[key];
+      }
+
+      _speedMultiplier(ribbon, dt) {
+        const amount = ribbon.speedJitter * this.config.waveSpeedJitter;
+        if (amount <= 0) return 1;
+
+        // リボンごとに独立した時計（baseSpeed で進行速度も変える）
+        ribbon.jitterTime += dt * ribbon.jitterTimeRate * (0.3 + ribbon.baseSpeed);
+        const t = ribbon.jitterTime;
+        const jf = ribbon.speedJitterFreq;
+        const p = ribbon.speedJitterPhase;
+
+        const target = 1
+          + Math.sin(t * jf + p) * amount
+          + Math.sin(t * jf * 1.73 + p * 2.1) * amount * 0.42
+          + Math.sin(t * jf * 0.41 + p * 3.8) * amount * 0.25;
+
+        const k = Math.min(1, dt * 0.9);
+        ribbon.smoothSpeed += (target - ribbon.smoothSpeed) * k;
+        return Math.max(0.15, ribbon.smoothSpeed);
+      }
+
+      _advanceRibbon(ribbon, dt) {
+        const mult = this._speedMultiplier(ribbon, dt);
+        ribbon.localPhase += dt * ribbon.baseSpeed * this.config.waveSpeed * mult;
+      }
+
+      _ribbonBreathe(ribbon) {
+        return 0.86 + Math.sin(this.t * ribbon.breatheFreq + ribbon.breathePhase) * 0.14;
+      }
+
+      _buildRibbonPoints(baseY, ribbon, dt) {
+        const { w, h, config } = this;
+        const freqMult = Math.max(0.75, this._smoothJitter(ribbon, config.waveFreqJitter, 2.1, 'smoothFreq', dt));
+        const ampMult  = Math.max(0.70, this._smoothJitter(ribbon, config.waveAmpJitter,  4.2, 'smoothAmp',  dt));
+        const freq = ribbon.freq * freqMult;
+        const amp  = ribbon.amp * ampMult * config.waveAmplitude * this._ribbonBreathe(ribbon);
+        const steps = Math.max(120, Math.floor(w));
+        const points = [];
+
+        for (let i = 0; i <= steps; i++) {
+          const x = (i / steps) * w;
+          const nx = i / steps;
+          const wave = Math.sin(nx * Math.PI * freq + ribbon.localPhase + ribbon.phase);
+          const y = baseY + wave * h * amp;
+          points.push({ x, y });
+        }
+        return points;
+      }
+
+      _strokeRibbon(points, ribbon) {
+        const { ctx, w, config } = this;
+        const grad = ctx.createLinearGradient(0, 0, w, 0);
+        grad.addColorStop(0,   config.colors.accentCyan);
+        grad.addColorStop(0.55, '#b090ff');
+        grad.addColorStop(1,   config.colors.accentMagenta);
+
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+
+        ctx.strokeStyle = grad;
+        ctx.globalAlpha = ribbon.alpha;
+        ctx.lineWidth = ribbon.lineWidth;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      draw(dt) {
+        const { ctx, w, h, config } = this;
+
+        ctx.clearRect(0, 0, w, h);
+        this.t += dt * config.waveSpeed;
+
+        for (const ribbon of this.ribbons) {
+          this._driftRibbon(ribbon, dt);
+          this._advanceRibbon(ribbon, dt);
+          const baseY = h * ribbon.yRatio;
+          const points = this._buildRibbonPoints(baseY, ribbon, dt);
+          this._strokeRibbon(points, ribbon);
+        }
+      }
+
+      start() {
+        const loop = (now) => {
+          const dt = Math.min((now - this.lastTime) / 1000, 0.05);
+          this.lastTime = now;
+          this.draw(dt);
+          requestAnimationFrame(loop);
+        };
+        requestAnimationFrame(loop);
+      }
+    }
+
+    applyConfig();
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    const wave = new BackgroundWave(document.getElementById('wave'), CONFIG);
+    wave.start();
+  </script>
+</body>
+</html>
